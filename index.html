@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confluence Turtle</title>
+<style>
+:root{--bg:#0f1115;--card:#171a21;--bd:#2a2f3a;--tx:#e8eaf0;--mu:#8b93a5;--g:#3ddc84;--r:#ff5c5c;--y:#ffd54a;--a:#4dd0e1}
+@media (prefers-color-scheme: light){:root{--bg:#f4f5f8;--card:#fff;--bd:#d9dce4;--tx:#1a1d24;--mu:#606878;--g:#0a8f4a;--r:#d32f2f;--y:#b58900;--a:#00838f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 -apple-system,system-ui,Segoe UI,Roboto,sans-serif;padding:12px;max-width:900px;margin:auto}
+h1{font-size:17px;margin:4px 0 10px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mu);flex:1 1 130px}
+input,button,select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);width:100%}
+button{background:var(--a);color:#000;border:0;font-weight:600;cursor:pointer;align-self:flex-end;flex:1 1 130px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:11px;color:var(--mu);text-align:right;font-weight:600;padding:4px}
+th:first-child,td:first-child{text-align:left}
+td{padding:6px 4px;border-bottom:1px solid var(--bd);text-align:right;font-variant-numeric:tabular-nums}
+td:last-child,th:last-child{text-align:left;color:var(--mu)}
+.g{color:var(--g)}.r{color:var(--r)}.y{color:var(--y)}.m{color:var(--mu)}
+canvas{width:100%;height:340px;display:block}
+#st{font-size:12px;color:var(--mu);margin-top:6px}
+.gauge{position:relative;height:14px;border-radius:7px;margin:34px 6px 8px;background:linear-gradient(90deg,var(--r) 0%,var(--r) 30%,var(--y) 40%,var(--y) 60%,var(--g) 70%,var(--g) 100%);opacity:.9}
+.gauge .mid{position:absolute;left:50%;top:-4px;bottom:-4px;width:2px;background:var(--tx);opacity:.6}
+.turtle{position:absolute;top:-30px;font-size:28px;line-height:1;transform:translateX(-50%);transition:left .6s ease;filter:drop-shadow(0 2px 2px rgba(0,0,0,.4))}
+.gl{display:flex;justify-content:space-between;font-size:12px;font-weight:700;margin:0 6px}
+#zone{text-align:center;font-size:18px;font-weight:700;margin-top:8px}
+#parts,#cur{font-size:12px;color:var(--mu);text-align:center;margin-top:4px}
+.note{font-size:12px;color:var(--mu);margin-top:8px}
+</style>
+</head>
+<body>
+<h1>Confluence Turtle — direzione dal Confluence Profile</h1>
+
+<div class="card">
+  <div class="row">
+    <label>Worker Yahoo<input id="worker" value="https://yahooproxy.b864v27974.workers.dev"></label>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <label>Dati<select id="mode"><option value="i">Intraday 1 min</option><option value="d">Giornalieri</option></select></label>
+    <label>Simbolo<input id="sym" value="QQQ"></label>
+    <label>Storico<input id="range" value="5d"></label>
+    <label>Conferma (barre)<input id="conf" type="number" min="1" max="20" value="3"></label>
+    <button id="go">Calcola</button>
+  </div>
+  <details style="margin-top:8px"><summary class="m" style="cursor:pointer;font-size:12px">Impostazioni dello script (default originali)</summary>
+    <div class="row" id="adv" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:8px"><label style="flex:1 1 100%">Livelli Fibonacci (separati da virgola)<input id="ratios" value="0,1,0.382,0.5,0.618,0.786,1.272"></label></div>
+    <button id="areset" style="margin-top:8px;flex:none;width:auto;padding:6px 12px">Ripristina impostazioni predefinite</button>
+  </details>
+  <div id="st"></div>
+</div>
+
+<div id="out" style="display:none">
+  <div class="card">
+    <div class="gl"><span class="r">◀ SHORT</span><span class="m">neutra</span><span class="g">LONG ▶</span></div>
+    <div class="gauge"><div class="mid"></div><div class="turtle" id="turtle">🐢</div></div>
+    <div id="zone"></div>
+    <div id="parts"></div>
+    <div id="cur"></div>
+  </div>
+  <div class="card">
+    <div class="m" style="font-size:12px;margin-bottom:4px">Colonna Confluence dello script (verde = supporto sotto il prezzo, rosso = resistenza sopra; linea = prezzo attuale)</div>
+    <canvas id="cv"></canvas>
+  </div>
+  <div class="card">
+    <table id="tbl"></table>
+    <div class="note" id="note"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = { get:k=>{try{return localStorage.getItem(k)}catch(e){return null}}, set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}} };
+
+// impostazioni dello script originale (dichiarate prima del primo uso)
+const ADV = [
+  ['atrLen','Lunghezza ATR',100,1], ['tol','Tolleranza (ATR)',0.15,0.01],
+  ['len1','Swing breve (pivot)',10,1], ['len2','Swing medio (pivot)',30,1], ['len3','Swing lungo (pivot)',80,1],
+  ['obLen','Pivot Order Block',12,1], ['obMin','OB altezza min (ATR)',0.1,0.05], ['fvgMin','FVG altezza min (ATR)',0.25,0.05],
+  ['wFib','Peso Fib',1,0.1], ['wOB','Peso OB',1,0.1], ['wFVG','Peso FVG',1,0.1], ['wVol','Peso volume',1,0.1]
+];
+const DEF_RATIOS = '0,1,0.382,0.5,0.618,0.786,1.272';
+const VOLMAX = 2000, OBSRC = 5, OBWICK_ATR = 2.0, VOLBIN_ATR = 0.1, VOLDUP = 80, HVNWIN = 1.0, MAXBARS = 2500;
+
+$('adv').innerHTML = ADV.map(a=>`<label style="flex:1 1 110px">${a[1]}<input id="a_${a[0]}" type="number" step="${a[3]}" min="0"></label>`).join('');
+(function(){ let sv=null; try{ sv=JSON.parse(store.get('cf_adv')); }catch(e){} ADV.forEach(a=>{ $('a_'+a[0]).value = (sv&&isFinite(sv[a[0]])&&sv[a[0]]>=0) ? sv[a[0]] : a[2]; }); })();
+$('worker').value = store.get('cf_worker') || 'https://yahooproxy.b864v27974.workers.dev';
+$('sym').value    = store.get('cf_sym') || 'QQQ';
+$('mode').value   = store.get('cf_mode') || 'i';
+$('conf').value   = store.get('cf_conf') || '3';
+$('ratios').value = store.get('cf_ratios') || DEF_RATIOS;
+$('range').value  = store.get('cf_range_'+$('mode').value) || ($('mode').value==='i' ? '5d' : '2y');
+
+const fmt = (v,d=2) => (v==null||!isFinite(v)) ? 'n/d' : v.toFixed(d);
+function smoothRma(a,p){ const n=a.length,o=new Array(n).fill(null); if(n<p) return o; let s=0; for(let i=0;i<p;i++) s+=a[i]; o[p-1]=s/p; for(let i=p;i<n;i++) o[i]=(o[i-1]*(p-1)+a[i])/p; return o; }
+
+// =====================================================================
+//  Motore: porting del Pine «Confluence Profile» (ultima barra = barra corrente)
+// =====================================================================
+function confluence(B, S){
+  const n=B.c.length, o=B.o, h=B.h, l=B.l, c=B.c, v=B.v, L=n-1;
+  const tr = c.map((x,i)=> i===0 ? h[i]-l[i] : Math.max(h[i]-l[i], Math.abs(h[i]-c[i-1]), Math.abs(l[i]-c[i-1])));
+  const atr = smoothRma(tr, S.atrLen);
+
+  // ---- swing con trailing (zigzag di pivot confermati) ----
+  function pivH(p,len){ if(p-len<0||p+len>L) return false; const x=h[p]; for(let j=p-len;j<=p+len;j++){ if(j===p) continue; if(j<p ? !(x>h[j]) : !(x>=h[j])) return false; } return true; }
+  function pivL(p,len){ if(p-len<0||p+len>L) return false; const x=l[p]; for(let j=p-len;j<=p+len;j++){ if(j===p) continue; if(j<p ? !(x<l[j]) : !(x<=l[j])) return false; } return true; }
+  function trailFib(len){
+    let pA=null,iA=null,pB=null,iB=null,hB=true;
+    const ext=(cur,o1,o2,hi)=>{ let p=null,idx=null; const a=Math.max(0,o1), b=Math.min(o2,Math.min(cur,VOLMAX));
+      if(a<=b){ for(let off=a;off<=b;off++){ const val=hi?h[cur-off]:l[cur-off]; if(p==null||(hi?val>p:val<p)){ p=val; idx=cur-off; } } } return [p,idx]; };
+    for(let cur=0;cur<n;cur++){
+      if(pB==null){ pA=l[cur]; iA=cur; pB=h[cur]; iB=cur; hB=true; }
+      const p=cur-len;
+      if(p>=len && pivH(p,len)){
+        const ph=h[p];
+        if(hB && iB<p){
+          const [lp,li]=ext(cur,cur-p+1,cur-iB-1,false);
+          if(lp!=null){
+            const [hp,hi_]=ext(cur,0,cur-li-1,true);
+            pA=lp; iA=li; pB=hp; iB=hi_; hB=true;
+            const [lp2,li2]=ext(cur,0,cur-iB-1,false);
+            if(lp2!=null && lp2<pA){ pA=pB; iA=iB; pB=lp2; iB=li2; hB=false; }
+          }
+        } else if(!hB && p>iB){
+          const [hp,hi_]=ext(cur,0,cur-iB-1,true);
+          if(hp!=null){ pA=pB; iA=iB; pB=hp; iB=hi_; hB=true; }
+        } else if(!hB && p>iA){ pA=ph; iA=p; }
+      }
+      if(p>=len && pivL(p,len)){
+        const pl=l[p];
+        if(!hB && iB<p){
+          const [hp,hi_]=ext(cur,cur-p+1,cur-iB-1,true);
+          if(hp!=null){
+            const [lp,li]=ext(cur,0,cur-hi_-1,false);
+            pA=hp; iA=hi_; pB=lp; iB=li; hB=false;
+            const [hp2,hi2]=ext(cur,0,cur-iB-1,true);
+            if(hp2!=null && hp2>pA){ pA=pB; iA=iB; pB=hp2; iB=hi2; hB=true; }
+          }
+        } else if(hB && p>iB){
+          const [lp,li]=ext(cur,0,cur-iB-1,false);
+          if(lp!=null){ pA=pB; iA=iB; pB=lp; iB=li; hB=false; }
+        } else if(hB && p>iA){ pA=pl; iA=p; }
+      }
+      const grn = c[cur]>=o[cur];
+      for(let step=0;step<2;step++){
+        const doLow = grn ? step===0 : step===1;
+        if(doLow){
+          if(!hB && l[cur]<pB){ pB=l[cur]; iB=cur; }
+          else if(hB && l[cur]<pA){ pA=pB; iA=iB; pB=l[cur]; iB=cur; hB=false; }
+        } else {
+          if(hB && h[cur]>pB){ pB=h[cur]; iB=cur; }
+          else if(!hB && h[cur]>pA){ pA=pB; iA=iB; pB=h[cur]; iB=cur; hB=true; }
+        }
+      }
+    }
+    return { h: hB?pB:pA, l: hB?pA:pB, z:hB, anchor:iA };
+  }
+  const sw = [S.len1,S.len2,S.len3].map(trailFib);
+
+  // ---- Order Block e FVG (creazione + tracking barra per barra) ----
+  const obZ=[], fvZ=[];
+  const isGreen=(cur,off)=>c[cur-off]>o[cur-off], isRed=(cur,off)=>c[cur-off]<o[cur-off];
+  function addZone(zs,t,b,left,bull,fvg){ if(zs.length>=300) zs.shift(); zs.push({top:t,bot:b,left,bull,fvg,ce:(t+b)/2}); }
+  function createOB(cur,bull){
+    const idx=S.obLen; if(cur-idx-OBSRC<0) return;
+    let src=idx;
+    if(bull && !isRed(cur,idx)){ for(let k=idx+1;k<=idx+OBSRC;k++){ if(isRed(cur,k)){ src=k; break; } } }
+    else if(!bull && !isGreen(cur,idx)){ for(let k=idx+1;k<=idx+OBSRC;k++){ if(isGreen(cur,k)){ src=k; break; } } }
+    let t=h[cur-src], b=l[cur-src];
+    if(bull) b=Math.min(b,l[cur-idx]); else t=Math.max(t,h[cur-idx]);
+    let used=src;
+    if((t-b)>atr[cur]*OBWICK_ATR){
+      if(bull){ t=Math.min(o[cur-idx],c[cur-idx]); b=l[cur-idx]; } else { t=h[cur-idx]; b=Math.max(o[cur-idx],c[cur-idx]); }
+      used=idx;
+    }
+    if((t-b)>=atr[cur]*S.obMin) addZone(obZ,t,b,cur-used,bull,false);
+  }
+  function track(zs,cur){
+    for(let i=zs.length-1;i>=0;i--){
+      const z=zs[i];
+      if(z.bull && c[cur]<z.bot){ zs.splice(i,1); continue; }
+      if(!z.bull && c[cur]>z.top){ zs.splice(i,1); continue; }
+      const touch = l[cur]<=z.top && h[cur]>=z.bot;
+      if(z.fvg && touch){
+        if(z.bull){ if(l[cur]<=z.bot){ zs.splice(i,1); continue; } z.top=Math.min(z.top,l[cur]); }
+        else { if(h[cur]>=z.top){ zs.splice(i,1); continue; } z.bot=Math.max(z.bot,h[cur]); }
+      }
+    }
+  }
+  for(let cur=0;cur<n;cur++){
+    if(atr[cur]==null) continue;
+    const p=cur-S.obLen;
+    if(p>=S.obLen){ if(pivL(p,S.obLen)) createOB(cur,true); if(pivH(p,S.obLen)) createOB(cur,false); }
+    if(cur>=2){
+      if(l[cur]>h[cur-2] && (l[cur]-h[cur-2])>=atr[cur]*S.fvgMin) addZone(fvZ,l[cur],h[cur-2],cur-2,true,true);
+      if(h[cur]<l[cur-2] && (l[cur-2]-h[cur])>=atr[cur]*S.fvgMin) addZone(fvZ,l[cur-2],h[cur],cur-2,false,true);
+    }
+    track(obZ,cur); track(fvZ,cur);
+  }
+
+  // ---- calcolo sull'ultima barra ----
+  const atrC = atr[L-1]!=null ? atr[L-1] : atr[L];
+  if(atrC==null) return null;
+  const tol = S.tol*atrC;
+  const active=[false,false,false], dup=[-1,-1,-1];
+  for(let k=0;k<3;k++){ const d=sw[k].h-sw[k].l; active[k]= isFinite(d) && d>0; }
+  for(let k=1;k<3;k++){
+    for(let m=0;m<k;m++) if(active[k]&&active[m]&&dup[k]<0 && Math.abs(sw[k].h-sw[m].h)<=tol && Math.abs(sw[k].l-sw[m].l)<=tol) dup[k]=m;
+    if(dup[k]>=0) active[k]=false;
+  }
+  const lvP=[], lvK=[];
+  for(let k=0;k<3;k++){ if(!active[k]) continue; const H=sw[k].h, Lw=sw[k].l, d=H-Lw;
+    for(const rt of S.ratios){ lvP.push(sw[k].z ? H-d*rt : Lw+d*rt); lvK.push(k); } }
+  let kL=-1; for(let k=0;k<3;k++) if(active[k]) kL=k;
+  const swLL = kL>=0?sw[kL].l:null, swHL = kL>=0?sw[kL].h:null;
+  let fLo=swLL, fHi=swHL;
+  for(const p of lvP){ fLo = fLo==null?p:Math.min(fLo,p); fHi = fHi==null?p:Math.max(fHi,p); }
+  const cRef = c[L-1]!=null ? c[L-1] : c[L];
+  const rLo = fLo==null ? cRef-10*atrC : Math.min(fLo,cRef)-tol;
+  const rHi = fHi==null ? cRef+10*atrC : Math.max(fHi,cRef)+tol;
+  const N = Math.min(200, Math.max(81, Math.ceil((rHi-rLo)/tol)));
+  const rh = (rHi-rLo)/N, rc = Math.max(0,Math.min(N-1,Math.floor((cRef-rLo)/rh)));
+  const lo = cRef-(rc+0.5)*rh, hi = lo+N*rh, tR = rh<=tol ? tol : tol+rh/2;
+  const rowsIn=(a,b)=>{ let rA,rB; if(rh<=tol){ rA=Math.max(0,Math.ceil((a-lo)/rh-0.5)); rB=Math.min(N-1,Math.floor((b-lo)/rh-0.5)); } else { rA=Math.max(0,Math.floor((a-lo)/rh)); rB=Math.min(N-1,Math.floor((b-lo)/rh)); } return [rA,rB]; };
+
+  // finestra Vext
+  const spanL = kL>=0 ? Math.min(L-sw[kL].anchor, VOLMAX-1) : -1;
+  let endZ=-1, cutZ=false;
+  if(kL>=0){
+    const needLo=fLo<swLL, needHi=fHi>swHL;
+    if(needLo||needHi){
+      const lim=Math.min(VOLMAX-1,L); let offLo=-1,offHi=-1,offMinL=-1,offMaxH=-1,minL=swLL,maxH=swHL;
+      for(let off=0;off<=lim;off++){
+        const ix=L-off;
+        if(needLo&&offLo<0){ if(l[ix]<=fLo) offLo=off; else if(l[ix]<minL){ minL=l[ix]; offMinL=off; } }
+        if(needHi&&offHi<0){ if(h[ix]>=fHi) offHi=off; else if(h[ix]>maxH){ maxH=h[ix]; offMaxH=off; } }
+        if(offLo>=0||offHi>=0) break;
+      }
+      if(offLo>=0||offHi>=0) endZ = offLo>=0?offLo:offHi; else { endZ=Math.max(offMinL,offMaxH); cutZ = lim<L; }
+    }
+  }
+  const zStart = kL>=0 ? L-Math.max(spanL,endZ)-OBSRC : 0;
+  const inWin = z => z.left>=zStart;
+
+  // profili di volume (V1..V3 sugli swing, Vext sulla finestra estesa) in modalità "Nodes"
+  function buildProf(endOff,pLo,pHi){
+    const vb=Math.max(VOLBIN_ATR*atrC,(pHi-pLo)/500), nb=Math.max(1,Math.ceil((pHi-pLo)/vb)), prof=new Array(nb).fill(0);
+    for(let off=1;off<=Math.max(1,endOff);off++){
+      const ix=L-off; if(ix<0) break;
+      const bh=h[ix], bl=l[ix], bv=v[ix]||0;
+      if(bv>0 && bh>=pLo && bl<=pHi){
+        if(bh>bl){
+          const ch=Math.min(bh,pHi), cl=Math.max(bl,pLo);
+          const bA=Math.max(0,Math.min(nb-1,Math.floor((cl-pLo)/vb))), bB=Math.max(0,Math.min(nb-1,Math.floor((ch-pLo)/vb)));
+          for(let bi=bA;bi<=bB;bi++){ const bBot=pLo+bi*vb, ov=Math.min(ch,bBot+vb)-Math.max(cl,bBot); if(ov>0) prof[bi]+=bv*ov/(bh-bl); }
+        } else { const bi=Math.max(0,Math.min(nb-1,Math.floor((bl-pLo)/vb))); prof[bi]+=bv; }
+      }
+    }
+    const hw=Math.max(1,Math.round(HVNWIN*atrC/vb)), raw=prof.slice();
+    for(let bi=0;bi<nb;bi++){ const qa=Math.max(0,bi-hw), qb=Math.min(nb-1,bi+hw); let sm=0; for(let q=qa;q<=qb;q++) sm+=raw[q]; prof[bi]=Math.max(0,raw[bi]-sm/(qb-qa+1)); }
+    let mx=0; for(const x of prof) if(x>mx) mx=x; if(mx>0) for(let bi=0;bi<nb;bi++) prof[bi]/=mx;
+    return {prof,vb,nb,pLo};
+  }
+  const volAt=(P,cc,t)=>{ let r=0; const a=cc-t,b=cc+t; if(P.nb>0 && b>=P.pLo && a<=P.pLo+P.nb*P.vb){ const bA=Math.max(0,Math.floor((a-P.pLo)/P.vb)), bB=Math.min(P.nb-1,Math.floor((b-P.pLo)/P.vb)); for(let i=bA;i<=bB;i++) r=Math.max(r,P.prof[i]); } return r; };
+  const volEnd=[0,0,0,0], volOn=[false,false,false,false], vLo=[0,0,0,0], vHi=[0,0,0,0], volDup=[-1,-1,-1,-1];
+  for(let k=0;k<3;k++) if(active[k]){ volEnd[k]=Math.min(L-sw[k].anchor,VOLMAX-1); volOn[k]=true; vLo[k]=sw[k].l; vHi[k]=sw[k].h; }
+  if(endZ>=0 && fLo!=null){ volEnd[3]=endZ; volOn[3]=true; vLo[3]=fLo; vHi[3]=fHi; }
+  for(let k=1;k<4;k++){
+    for(let m=0;m<k;m++) if(volOn[k]&&volOn[m]&&volDup[k]<0){ const s=Math.min(volEnd[k],volEnd[m])+1, lg=Math.max(volEnd[k],volEnd[m])+1; if(s/lg*100>=VOLDUP) volDup[k]=m; }
+    if(volDup[k]>=0) volOn[k]=false;
+  }
+  const profs=[null,null,null,null], volL=[0,1,2,3].map(()=>new Array(N).fill(0));
+  const hasVol = v.some(x=>x>0);
+  for(let k=0;k<4;k++){ if(!volOn[k]||!hasVol) { volOn[k]=false; continue; } profs[k]=buildProf(volEnd[k],vLo[k],vHi[k]);
+    for(let r=0;r<N;r++) volL[k][r]=volAt(profs[k], lo+(r+0.5)*rh, tR); }
+
+  // corsie Fib / OB / FVG
+  const fibL=[0,1,2].map(()=>new Array(N).fill(0));
+  for(let j=0;j<lvP.length;j++){ const p=lvP[j]; if(p+tol>=lo && p-tol<hi){ const [rA,rB]=rowsIn(p-tol,p+tol); for(let r=rA;r<=rB;r++) fibL[lvK[j]][r]=1; } }
+  const obBull=new Array(N).fill(0), obBear=new Array(N).fill(0), fvBull=new Array(N).fill(0), fvBear=new Array(N).fill(0);
+  const zonesToLane=(zs,bu,be)=>{ for(const z of zs){ if(!inWin(z)) continue; const zb=z.bot-tol, zt=z.top+tol; if(zt>lo && zb<hi){ const [rA,rB]=rowsIn(zb,zt); for(let r=rA;r<=rB;r++){ if(z.bull) bu[r]=1; else be[r]=1; } } } };
+  zonesToLane(obZ,obBull,obBear); zonesToLane(fvZ,fvBull,fvBear);
+
+  // somma di confluenza per riga
+  const sArr=new Array(N).fill(0); let sMax=0;
+  for(let r=0;r<N;r++){
+    let s=0; for(let k=0;k<3;k++) s+=fibL[k][r]*S.wFib;
+    s+=Math.max(obBull[r],obBear[r])*S.wOB + Math.max(fvBull[r],fvBear[r])*S.wFVG;
+    for(let k=0;k<4;k++) s+=volL[k][r]*S.wVol;
+    sArr[r]=s; if(s>sMax) sMax=s;
+  }
+  const compsAt=r=>{ const t=[]; for(let k=0;k<3;k++) if(fibL[k][r]>0) t.push('F'+(k+1)); if(obBull[r]>0) t.push('OB↑'); if(obBear[r]>0) t.push('OB↓'); if(fvBull[r]>0) t.push('FVG↑'); if(fvBear[r]>0) t.push('FVG↓');
+    ['V1','V2','V3','Vext'].forEach((nm,k)=>{ if(volL[k][r]>=0.5) t.push(nm); }); return t.join(' · '); };
+
+  // confluenza esattamente al prezzo (come l'etichetta dello script)
+  const c0=c[L]; let curScore=0; const curC=[];
+  for(let k=0;k<3;k++){ let hit=false; for(let j=0;j<lvP.length;j++) if(lvK[j]===k && Math.abs(lvP[j]-c0)<=tol){ hit=true; break; } if(hit&&S.wFib>0){ curScore+=S.wFib; curC.push('F'+(k+1)); } }
+  const zAt=zs=>{ let bu=false,be=false; for(const z of zs){ if(inWin(z)&&c0>=z.bot-tol&&c0<=z.top+tol){ if(z.bull) bu=true; else be=true; } } return [bu,be]; };
+  const [obU,obE]=zAt(obZ), [fvU,fvE]=zAt(fvZ);
+  if(obU||obE){ curScore+=S.wOB; curC.push(obU?'OB↑':'OB↓'); } if(fvU||fvE){ curScore+=S.wFVG; curC.push(fvU?'FVG↑':'FVG↓'); }
+  ['V1','V2','V3','Vext'].forEach((nm,k)=>{ if(volOn[k]){ const x=volAt(profs[k],c0,tol); curScore+=x*S.wVol; if(x>=0.5) curC.push(nm); } });
+
+  // ---- direzione: la colonna Σ dello script, colorata per lato ----
+  // sotto il prezzo = supporto (verde), sopra il prezzo = resistenza (rosso); la riga del prezzo è neutra
+  let below=0, above=0;
+  for(let r=0;r<N;r++){ if(r<rc) below+=sArr[r]; else if(r>rc) above+=sArr[r]; }
+  const pos = (below+above)>0 ? (below-above)/(below+above)*100 : null;
+
+  // livelli più forti (massimi locali) sopra e sotto il prezzo, entro il raggio
+  const levels=[];
+  for(let r=0;r<N;r++){
+    if(r===rc||sArr[r]<=0) continue;
+    if((r>0&&sArr[r-1]>sArr[r])||(r<N-1&&sArr[r+1]>sArr[r])) continue;
+    const price=lo+(r+0.5)*rh, d=(price-cRef)/atrC;
+    levels.push({price,d,score:sArr[r],comps:compsAt(r),above:r>rc});
+  }
+  return { atrC, tol, cRef, c0, lo, hi, rh, N, rc, sArr, sMax, pos, below, above,
+           curScore, curComps:curC.join(' · '), levels, active, sw, dup, nOB:obZ.filter(inWin).length, nFVG:fvZ.filter(inWin).length, volOn, hasVol, endZ, cutZ };
+}
+
+// =====================================================================
+//  Interfaccia
+// =====================================================================
+function readSettings(){
+  const S={};
+  ADV.forEach(a=>{ const x=parseFloat($('a_'+a[0]).value); S[a[0]] = isFinite(x)&&x>=0 ? x : a[2]; });
+  ['atrLen','len1','len2','len3','obLen'].forEach(k=>{ S[k]=Math.max(1,Math.round(S[k])); });
+  S.tol=Math.max(0.01,S.tol);
+  let r=$('ratios').value.split(',').map(x=>parseFloat(x.trim())).filter(x=>isFinite(x));
+  S.ratios = r.length ? r : DEF_RATIOS.split(',').map(Number);
+  S.N=Math.max(1,Math.min(20,parseInt($('conf').value)||1));
+  return S;
+}
+let zh=[], zhKey='';
+function confirmZone(N){
+  let cur=null,cand=null,cnt=0;
+  for(const e of zh){ const z=e.z;
+    if(z==null){ cand=null; cnt=0; }
+    else if(cur==null){ cur=z; cand=null; cnt=0; }
+    else if(z===cur){ cand=null; cnt=0; }
+    else { if(z===cand) cnt++; else { cand=z; cnt=1; } if(cnt>=N){ cur=z; cand=null; cnt=0; } }
+  }
+  return {cur, pend: cand==null?null:{z:cand,k:cnt}};
+}
+
+const sg = x => x==null ? 'n/d' : (x>0?'+':'')+Math.round(x);
+function render(R,S,tBar){
+  const pos = R.pos;
+  if(pos==null){ $('st').textContent='Nessuna confluenza nel profilo: direzione non calcolabile.'; return; }
+  const zr = pos<=-33?-1:pos>=33?1:0;
+  const key=[$('sym').value,$('mode').value,S.N].join('|'); if(key!==zhKey){ zh=[]; zhKey=key; }
+  if(zh.length && zh[zh.length-1].t===tBar) zh[zh.length-1].z=zr; else zh.push({t:tBar,z:zr}); if(zh.length>300) zh.shift();
+  const cf=confirmZone(S.N);
+  const score=Math.round((pos+100)/2);
+  $('turtle').style.left=score+'%';
+  const ZN={'-1':['ZONA SHORT','r'],'0':['ZONA NEUTRA','y'],'1':['ZONA LONG','g']}, z=ZN[String(cf.cur)]||ZN['0'];
+  const p=Math.round(pos);
+  $('zone').className=z[1]; $('zone').textContent=z[0]+' ('+(p>0?'+':'')+p+')  ·  punteggio '+score+'/100';
+  const pend = cf.pend ? ' · in attesa di conferma → '+ZN[String(cf.pend.z)][0].replace('ZONA ','')+' ('+cf.pend.k+'/'+S.N+')' : '';
+  $('parts').textContent = 'Supporto (confluenza sotto il prezzo): '+fmt(R.below,1)+' · Resistenza (sopra il prezzo): '+fmt(R.above,1)+pend;
+  $('cur').textContent = 'Confluenza al prezzo: '+fmt(R.curScore,1)+(R.curComps?' ('+R.curComps+')':'')+' · ATR '+fmt(R.atrC,3);
+  const row=(l)=>`<tr><td>${fmt(l.price)}</td><td>${(l.d>0?'+':'')+fmt(l.d,1)}</td><td class="${l.above?'r':'g'}">${fmt(l.score,1)}</td><td>${l.comps||'—'}</td></tr>`;
+  const up=R.levels.filter(l=>l.above).sort((a,b)=>b.score-a.score).slice(0,4).sort((a,b)=>a.price-b.price);
+  const dn=R.levels.filter(l=>!l.above).sort((a,b)=>b.score-a.score).slice(0,4).sort((a,b)=>b.price-a.price);
+  $('tbl').innerHTML='<tr><th>Livello più forte</th><th>Dist. (ATR)</th><th>Confluenza</th><th>Componenti</th></tr>'
+    + (up.length?'<tr><td colspan="4" class="r" style="text-align:left;font-size:11px">Resistenze sopra il prezzo</td></tr>'+up.map(row).join(''):'')
+    + (dn.length?'<tr><td colspan="4" class="g" style="text-align:left;font-size:11px">Supporti sotto il prezzo</td></tr>'+dn.map(row).join(''):'');
+  $('note').textContent = 'Direzione dalla colonna «Confluence» dello script: somma, riga per riga, di Fibonacci, Order Block, FVG e volume. Come nello script, la confluenza sotto il prezzo è supporto (verde) e quella sopra è resistenza (rossa). Posizione = (supporto − resistenza) / (supporto + resistenza), da −100 a +100; zona short ≤ −33, long ≥ +33. La conferma conta le barre osservate mentre la pagina resta aperta.';
+  $('out').style.display='block';
+  draw(R,S);
+}
+
+function draw(R,S){
+  const cv=$('cv'), dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight;
+  cv.width=W*dpr; cv.height=H*dpr; const c=cv.getContext('2d'); c.scale(dpr,dpr);
+  const css=getComputedStyle(document.documentElement), gc=css.getPropertyValue('--g').trim()||'#3ddc84', rc_=css.getPropertyValue('--r').trim()||'#ff5c5c', mu=css.getPropertyValue('--mu').trim()||'#888', tx=css.getPropertyValue('--tx').trim()||'#fff';
+  const span=6*R.atrC, pLo=Math.max(R.lo,R.cRef-span), pHi=Math.min(R.hi,R.cRef+span);
+  const X0=58, X1=W-8, y=p=>6+(pHi-p)/(pHi-pLo)*(H-14);
+  c.font='11px sans-serif'; c.textBaseline='middle';
+  for(let r=0;r<R.N;r++){
+    const top=R.lo+(r+1)*R.rh, bot=R.lo+r*R.rh; if(top<pLo||bot>pHi||R.sArr[r]<=0||R.sMax<=0) continue;
+    const w=R.sArr[r]/R.sMax*(X1-X0); c.globalAlpha=.75; c.fillStyle = r<R.rc?gc:r>R.rc?rc_:mu;
+    c.fillRect(X0,y(Math.min(top,pHi)),w,Math.max(1,y(Math.max(bot,pLo))-y(Math.min(top,pHi))));
+  }
+  c.globalAlpha=1;
+  const ticks=5; for(let i=0;i<=ticks;i++){ const p=pLo+(pHi-pLo)*i/ticks; c.fillStyle=mu; c.fillText(p.toFixed(2),2,y(p)); }
+  c.strokeStyle=tx; c.setLineDash([4,3]); c.beginPath(); c.moveTo(X0,y(R.cRef)); c.lineTo(X1,y(R.cRef)); c.stroke(); c.setLineDash([]);
+  c.fillStyle=tx; c.fillText(R.cRef.toFixed(2),X1-44,y(R.cRef)-8);
+}
+
+function workerUrl(base,sym,range,interval){ return base+(base.includes('?')?'&':'?')+`symbol=${encodeURIComponent(sym)}&interval=${interval}&range=${encodeURIComponent(range)}`; }
+
+let last=null, busy=false;
+async function run(){
+  if(busy) return;
+  const wk=$('worker').value.trim(), sym=$('sym').value.trim().toUpperCase();
+  if(!wk){ $('st').textContent="Inserisci l'URL del Worker Yahoo."; return; }
+  const intra=$('mode').value==='i', range=$('range').value.trim()||(intra?'5d':'2y'), S=readSettings();
+  store.set('cf_worker',wk); store.set('cf_sym',sym); store.set('cf_mode',$('mode').value); store.set('cf_conf',String(S.N));
+  store.set('cf_ratios',$('ratios').value); store.set('cf_range_'+$('mode').value,range);
+  const adv={}; ADV.forEach(a=>{ adv[a[0]]=S[a[0]]; }); store.set('cf_adv',JSON.stringify(adv));
+  $('st').textContent='Scarico dati…'; $('go').disabled=true; busy=true;
+  try{
+    const r=await fetch(workerUrl(wk,sym,range,intra?'1m':'1d'));
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j=await r.json(); const res0=j.chart&&j.chart.result&&j.chart.result[0];
+    if(!res0) throw new Error((j.chart&&j.chart.error&&j.chart.error.description)||'risposta senza dati');
+    const gr=res0.meta&&res0.meta.dataGranularity;
+    if(gr&&gr!==(intra?'1m':'1d')) throw new Error('il Worker ha restituito dati '+gr+' invece di '+(intra?'1 minuto':'giornalieri'));
+    if(res0.meta&&res0.meta.symbol&&res0.meta.symbol.toUpperCase()!==sym) throw new Error('il Worker ha restituito '+res0.meta.symbol+' invece di '+sym);
+    const ts=res0.timestamp||[], q=res0.indicators.quote[0], B={t:[],o:[],h:[],l:[],c:[],v:[]};
+    ts.forEach((t,i)=>{ const cl=q.close[i]; if(cl==null) return; B.t.push(t); B.c.push(cl); B.o.push(q.open&&q.open[i]!=null?q.open[i]:cl); B.h.push(q.high&&q.high[i]!=null?q.high[i]:cl); B.l.push(q.low&&q.low[i]!=null?q.low[i]:cl); B.v.push(q.volume&&q.volume[i]!=null?q.volume[i]:0); });
+    if(B.c.length>MAXBARS) for(const k in B) B[k]=B[k].slice(-MAXBARS);
+    if(B.c.length<S.atrLen+30) throw new Error(`solo ${B.c.length} barre: ne servono almeno ${S.atrLen+30} (aumenta Storico)`);
+    const t0=Date.now(), R=confluence(B,S);
+    if(!R) throw new Error('ATR non calcolabile con questi dati');
+    last=R; render(R,S,B.t[B.t.length-1]);
+    const tz=intra?'Europe/Rome':(res0.meta&&res0.meta.exchangeTimezoneName)||'America/New_York';
+    const when=new Date(B.t[B.t.length-1]*1000).toLocaleString('it-IT',{timeZone:tz});
+    $('st').textContent=`${sym} · ${B.c.length} barre ${intra?'da 1 min':'giornaliere'} · ultima barra ${when} (${tz}) · ${R.nOB} OB e ${R.nFVG} FVG nella finestra · calcolo ${Date.now()-t0} ms`+(R.hasVol?'':' · nessun dato di volume: V1-V3 e Vext vuoti');
+  }catch(e){ $('st').textContent='Errore: '+e.message; }
+  finally{ $('go').disabled=false; busy=false; }
+}
+$('go').onclick=run;
+['mode'].forEach(id=>{ $(id).onchange=()=>{ $('range').value=store.get('cf_range_'+$('mode').value)||($('mode').value==='i'?'5d':'2y'); run(); }; });
+['conf','ratios'].forEach(id=>{ $(id).onchange=run; });
+ADV.forEach(a=>{ $('a_'+a[0]).onchange=run; });
+$('areset').onclick=()=>{ ADV.forEach(a=>{ $('a_'+a[0]).value=a[2]; }); $('ratios').value=DEF_RATIOS; run(); };
+window.addEventListener('resize',()=>{ if(last) draw(last,readSettings()); });
+if($('worker').value) run();
+setInterval(()=>{ if($('mode').value==='i' && $('worker').value.trim()) run(); },10000); // aggiornamento automatico ogni 10 s (solo intraday)
+</script>
+</body>
+</html>
